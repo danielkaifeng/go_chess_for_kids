@@ -337,17 +337,43 @@ function scoreMove(g, x, y, color) {
   const tmp = g.clone();
   const res = tmp.tryMove(x, y);
   if (!res.ok) return -Infinity;
-  let s = res.captured * 10;
+  let s = res.captured * 20;
+
+  // Reward putting opponent in atari; penalise self-atari
+  const og = tmp.getGroup(x, y);
+  if (og && og.liberties.size === 1) s -= 18;
+  if (og && og.liberties.size >= 3) s += 3;
+
   for (const [nx, ny] of tmp.neighbors(x, y)) {
-    if (tmp.board[nx][ny] === opp) {
+    const nb = tmp.board[nx][ny];
+    if (nb === opp) {
       const grp = tmp.getGroup(nx, ny);
-      if (grp && grp.liberties.size === 1) s += 5;
+      if (grp && grp.liberties.size === 1) s += 10;  // put opp in atari
     }
   }
-  const og = tmp.getGroup(x, y);
-  if (og && og.liberties.size === 1) s -= 8;
-  const c = (g.size - 1) / 2;
-  s += Math.max(0, (g.size / 2 - Math.abs(x - c) - Math.abs(y - c)) * 0.3);
+
+  // Save own stones that were in atari before the move
+  for (const [nx, ny] of g.neighbors(x, y)) {
+    if (g.board[nx][ny] === color) {
+      const grp = g.getGroup(nx, ny);
+      if (grp && grp.liberties.size === 1) s += 25; // rescue own atari group
+    }
+  }
+
+  // Connectivity bonus: adjacent to own stones
+  let ownNeighbours = 0;
+  for (const [nx, ny] of tmp.neighbors(x, y)) {
+    if (tmp.board[nx][ny] === color) ownNeighbours++;
+  }
+  s += ownNeighbours * 1.5;
+
+  // Edge penalty (first line = index 0 or size-1)
+  const edge = g.size - 1;
+  if (x === 0 || y === 0 || x === edge || y === edge) s -= 6;
+
+  // Centre bias (mild)
+  const c = edge / 2;
+  s += Math.max(0, (g.size / 2 - Math.abs(x - c) - Math.abs(y - c)) * 0.2);
   return s;
 }
 
@@ -369,17 +395,28 @@ function aiMedium(g) {
   return best;
 }
 
-function randomPlayout(g, maxMoves) {
+// Fast playout: sample random empty cells without full validMoves scan at each step
+function fastPlayout(g, maxMoves) {
   const sim = g.clone();
+  const sz = sim.size;
   let passes = 0;
   for (let i = 0; i < maxMoves; i++) {
-    const moves = shuffle(validMoves(sim));
-    if (!moves.length || Math.random() < 0.1) {
-      if (++passes >= 2) break; sim.pass();
-    } else {
-      passes = 0;
-      const [x, y] = moves[Math.floor(Math.random() * Math.min(10, moves.length))];
-      sim.tryMove(x, y);
+    // Build a small random sample of empty intersections
+    const empties = [];
+    for (let attempts = 0; attempts < sz * 3; attempts++) {
+      const x = Math.floor(Math.random() * sz);
+      const y = Math.floor(Math.random() * sz);
+      if (sim.board[x][y] === EMPTY) empties.push([x, y]);
+      if (empties.length >= 8) break;
+    }
+    let moved = false;
+    for (const [x, y] of empties) {
+      const r = sim.tryMove(x, y);
+      if (r.ok) { passes = 0; moved = true; break; }
+    }
+    if (!moved) {
+      if (++passes >= 2) break;
+      sim.pass();
     }
   }
   return sim.scoreGame().winner;
@@ -387,31 +424,43 @@ function randomPlayout(g, maxMoves) {
 
 async function aiHard(g) {
   const color = g.turn;
-  const moves = validMoves(g);
-  if (!moves.length) return null;
+  const allMoves = validMoves(g);
+  if (!allMoves.length) return null;
+
+  // Pre-filter: top 15 candidates by heuristic score
+  const candidates = allMoves
+    .map(([x, y]) => ({ x, y, s: scoreMove(g, x, y, color) }))
+    .filter(m => m.s > -Infinity)
+    .sort((a, b) => b.s - a.s)
+    .slice(0, 15);
+  if (!candidates.length) return allMoves[0];
+
   const wins = new Map(), plays = new Map();
-  const rollouts = Math.min(300, moves.length * 20);
-  for (const [x, y] of moves) { const k = x*g.size+y; wins.set(k,0); plays.set(k,0); }
-  for (let done = 0; done < rollouts; done += 30) {
+  for (const m of candidates) { const k = m.x*g.size+m.y; wins.set(k,0); plays.set(k,0); }
+
+  const totalRollouts = candidates.length * 25;
+  const batchSize = 25;
+  for (let done = 0; done < totalRollouts; done += batchSize) {
     await new Promise(r => setTimeout(r, 0));
-    for (let b = 0; b < 30 && done+b < rollouts; b++) {
+    for (let b = 0; b < batchSize && done+b < totalRollouts; b++) {
       const total = [...plays.values()].reduce((a,v)=>a+v,0)+1;
       let bk = null, bu = -Infinity;
-      for (const [x,y] of moves) {
-        const k=x*g.size+y, p=plays.get(k), w=wins.get(k);
-        const u = p===0 ? Infinity : w/p + Math.sqrt(2*Math.log(total)/p);
+      for (const m of candidates) {
+        const k=m.x*g.size+m.y, p=plays.get(k), w=wins.get(k);
+        const u = p===0 ? Infinity : w/p + Math.sqrt(1.5*Math.log(total)/p);
         if (u > bu) { bu=u; bk=k; }
       }
       const tmp = g.clone();
       tmp.tryMove(Math.floor(bk/g.size), bk%g.size);
-      const winner = randomPlayout(tmp, g.size*g.size);
+      const winner = fastPlayout(tmp, g.size * 3);
       plays.set(bk, plays.get(bk)+1);
       if (winner===color) wins.set(bk, wins.get(bk)+1);
     }
   }
-  let bm = moves[0], bp = -1;
-  for (const [x,y] of moves) { const p=plays.get(x*g.size+y); if (p>bp){bp=p; bm=[x,y];} }
-  return bm;
+
+  let best = candidates[0], bp = -1;
+  for (const m of candidates) { const p=plays.get(m.x*g.size+m.y); if (p>bp){bp=p; best=m;} }
+  return [best.x, best.y];
 }
 
 // ── Hint system — always uses MCTS regardless of difficulty ──────────────────
@@ -442,7 +491,7 @@ async function computeHintsAsync(g) {
       const k = `${m.x},${m.y}`;
       const tmp = g.clone();
       tmp.tryMove(m.x, m.y);
-      const winner = randomPlayout(tmp, Math.min(g.size * 3, 45));
+      const winner = fastPlayout(tmp, Math.min(g.size * 3, 45));
       plays.set(k, plays.get(k)+1);
       if (winner === color) wins.set(k, wins.get(k)+1);
     }
@@ -558,7 +607,7 @@ function addChat(from, emoji) {
 }
 
 async function aiReactToEmoji(userEmoji) {
-  await new Promise(r => setTimeout(r, 700 + Math.random() * 1300));
+  await new Promise(r => setTimeout(r, 1000 + Math.random() * 500));
   const reply = rnd(EMOJI_REPLIES[userEmoji] || ['😊', '🤔']);
   showEmotion(reply, 2200);
   addChat('ai', reply);
@@ -571,7 +620,7 @@ async function doAIMove() {
   if (!game || game.over || game.turn === BLACK || aiThinking) return;
   aiThinking = true;
 
-  const thinkMs = 1000 + Math.random() * 4000;
+  const thinkMs = 500 + Math.random() * 1500;
   showThinkingDots(true);
   showSidebarEmotion(rnd(EMOJI.thinking), thinkMs + 500);
   await new Promise(r => setTimeout(r, thinkMs));
