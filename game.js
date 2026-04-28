@@ -32,7 +32,7 @@ function clearHints() {
 
 // ── Emoji reaction ────────────────────────────────────────────────────────────
 async function aiReactToEmoji(userEmoji) {
-  await new Promise(r => setTimeout(r, 1000 + Math.random() * 500));
+  await new Promise(r => setTimeout(r, 5000 + Math.random() * 1000));
   const reply = rnd(EMOJI_REPLIES[userEmoji] || ['😊', '🤔']);
   showEmotion(reply, 2200);
   addChat('ai', reply);
@@ -44,7 +44,7 @@ async function doAIMove() {
   if (!game || game.over || game.turn === BLACK || aiThinking) return;
   aiThinking = true;
 
-  const thinkMs = 500 + Math.random() * 1500;
+  const thinkMs = 500 + Math.random() * 500;
   showThinkingDots(true);
   showSidebarEmotion(rnd(EMOJI.thinking), thinkMs + 500);
   await new Promise(r => setTimeout(r, thinkMs));

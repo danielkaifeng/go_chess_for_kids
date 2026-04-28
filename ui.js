@@ -84,15 +84,15 @@ export function showBoardEmotion(emoji) {
   const rect   = canvas.getBoundingClientRect();
   el.textContent = emoji;
   el.style.left  = Math.round(rect.left + rect.width  / 2) + 'px';
-  el.style.top   = Math.round(rect.top  + rect.height / 2) + 'px';
+  el.style.top   = Math.round(rect.top  + rect.height / 3) + 'px';
   el.classList.remove('hidden', 'bemoji-in', 'bemoji-out');
   void el.offsetWidth;
   el.classList.add('bemoji-in');
   clearTimeout(boardEmotionTimer);
   boardEmotionTimer = setTimeout(() => {
     el.classList.replace('bemoji-in', 'bemoji-out');
-    setTimeout(() => { el.classList.add('hidden'); el.classList.remove('bemoji-out'); }, 500);
-  }, 2000);
+    setTimeout(() => { el.classList.add('hidden'); el.classList.remove('bemoji-out'); }, 3000);
+  }, 5000);
 }
 
 export function showEmotion(emoji, sidebarMs = 2800) {
