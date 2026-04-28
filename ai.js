@@ -1,6 +1,68 @@
 // ── AI engine — pure logic, no DOM ────────────────────────────────────────────
 import { BLACK, WHITE, EMPTY } from './go-rules.js';
 
+// ── Opening book ──────────────────────────────────────────────────────────────
+// Hoshi (star) points for each board size, corners first then edges then tengen
+const STAR_POINTS = {
+   9: [[2,2],[2,6],[6,2],[6,6],[4,4]],
+  13: [[3,3],[3,9],[9,3],[9,9],[3,6],[9,6],[6,3],[6,9],[6,6]],
+  19: [[3,3],[3,9],[3,15],[9,3],[9,9],[9,15],[15,3],[15,9],[15,15]],
+};
+
+// Returns a star-point move during the opening, or null once past opening phase
+function openingMove(g) {
+  const pts = STAR_POINTS[g.size];
+  if (!pts || g.moves.length >= g.size) return null;
+  const center = (g.size - 1) / 2;
+  const available = pts.filter(([x, y]) => g.board[x][y] === EMPTY);
+  if (!available.length) return null;
+  // Prefer corners / edges before tengen
+  const preferred = available.filter(([x, y]) => Math.abs(x - center) > 1 || Math.abs(y - center) > 1);
+  const pool = preferred.length ? preferred : available;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+// ── Atari escape detector ─────────────────────────────────────────────────────
+// If any of `color`'s groups are in atari (1 liberty), returns the best escape
+// move (the one that leaves the saved group with the most liberties). Returns
+// null when no own groups are currently in atari.
+function findAtariEscape(g, color) {
+  const seen  = new Set();
+  const cands = new Map(); // escape_key → [x, y, resultingLibs]
+
+  for (let x = 0; x < g.size; x++) {
+    for (let y = 0; y < g.size; y++) {
+      if (g.board[x][y] !== color) continue;
+      const gk = x * g.size + y;
+      if (seen.has(gk)) continue;
+
+      const grp = g.getGroup(x, y);
+      if (!grp) continue;
+      for (const [sx, sy] of grp.stones) seen.add(sx * g.size + sy);
+      if (grp.liberties.size !== 1) continue; // only atari groups
+
+      for (const libKey of grp.liberties) {
+        const ex = Math.floor(libKey / g.size);
+        const ey = libKey % g.size;
+        const ek = ex * g.size + ey;
+        if (cands.has(ek)) continue;
+        const tmp = g.clone();
+        if (!tmp.tryMove(ex, ey).ok) continue;
+        const ng = tmp.getGroup(ex, ey);
+        if (!ng || ng.liberties.size < 2) continue; // move doesn't help
+        cands.set(ek, [ex, ey, ng.liberties.size]);
+      }
+    }
+  }
+
+  if (!cands.size) return null;
+  let best = null, bestLibs = 0;
+  for (const [, [ex, ey, libs]] of cands) {
+    if (libs > bestLibs) { bestLibs = libs; best = [ex, ey]; }
+  }
+  return best;
+}
+
 // ── Move utilities ────────────────────────────────────────────────────────────
 
 export function validMoves(g) {
@@ -122,6 +184,14 @@ export async function aiHard(g) {
   const allMoves = validMoves(g);
   if (!allMoves.length) return null;
 
+  // Opening book: instant star-point moves, no MCTS needed
+  const op = openingMove(g);
+  if (op) return op;
+
+  // Atari rescue: always escape own groups in danger before anything else
+  const escape = findAtariEscape(g, color);
+  if (escape) return escape;
+
   const last  = g.moves.length > 0 && !g.moves[g.moves.length - 1].pass
     ? g.moves[g.moves.length - 1] : null;
   const prev  = g.moves.length > 1 && !g.moves[g.moves.length - 2].pass
@@ -188,6 +258,14 @@ export async function aiNeural(g, getPriors = null) {
   const color = g.turn;
   const allMoves = validMoves(g);
   if (!allMoves.length) return null;
+
+  // Opening book: instant star-point moves, no MCTS needed
+  const op = openingMove(g);
+  if (op) return op;
+
+  // Atari rescue: always escape own groups in danger before anything else
+  const escape = findAtariEscape(g, color);
+  if (escape) return escape;
 
   const last    = g.moves.length > 0 && !g.moves[g.moves.length - 1].pass ? g.moves[g.moves.length - 1] : null;
   const prev    = g.moves.length > 1 && !g.moves[g.moves.length - 2].pass ? g.moves[g.moves.length - 2] : null;
