@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="classic">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <!-- App-like on iPad -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>Go · 围棋</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-theme="classic">
+
+  <!-- Large emoji reaction floating over the board -->
+  <div id="board-emotion" class="hidden"></div>
+
+  <div id="app">
+    <main id="board-area">
+      <canvas id="board" width="600" height="600"></canvas>
+    </main>
+
+    <aside id="sidebar">
+      <h1>围棋 <span class="sub">Go</span></h1>
+
+      <!-- AI presence zone -->
+      <div id="ai-zone">
+        <span id="ai-emoji">👦</span>
+        <div class="ai-info">
+          <span id="ai-name-display" class="ai-label">小明</span>
+          <span id="ai-title-display" class="ai-title">围棋爱好者</span>
+          <span id="ai-status">
+            <span id="think-dots" class="hidden">
+              <span></span><span></span><span></span>
+            </span>
+          </span>
+        </div>
+        <div id="emotion-bubble" class="hidden"></div>
+      </div>
+
+      <section class="ctrl-group">
+        <label>Board</label>
+        <div class="btn-row" id="size-btns">
+          <button data-size="9"  class="opt-btn">9×9</button>
+          <button data-size="13" class="opt-btn active">13×13</button>
+          <button data-size="19" class="opt-btn">19×19</button>
+        </div>
+      </section>
+
+      <section class="ctrl-group">
+        <label>Theme</label>
+        <div class="btn-row" id="theme-btns">
+          <button data-theme="classic" class="opt-btn active">Classic</button>
+          <button data-theme="paper"   class="opt-btn">Paper</button>
+          <button data-theme="dark"    class="opt-btn">Dark</button>
+        </div>
+      </section>
+
+      <section class="ctrl-group">
+        <label>Difficulty</label>
+        <div class="btn-row" id="diff-btns">
+          <button data-diff="beginner" class="opt-btn active">Easy</button>
+          <button data-diff="medium"   class="opt-btn">Med</button>
+          <button data-diff="hard"     class="opt-btn">Hard</button>
+        </div>
+      </section>
+
+      <section class="ctrl-group score-box">
+        <div class="score-row">
+          <span class="stone-icon black-stone"></span>
+          <span>You: <strong id="black-cap">0</strong> captures</span>
+        </div>
+        <div class="score-row">
+          <span class="stone-icon white-stone"></span>
+          <span><span id="ai-score-name">AI</span>: <strong id="white-cap">0</strong> captures</span>
+        </div>
+        <div class="score-row komi-row">
+          <span>Komi: <strong>6.5</strong></span>
+        </div>
+        <div id="final-score" class="final-score hidden"></div>
+      </section>
+
+      <section class="ctrl-group action-btns">
+        <button id="btn-new" class="action-btn primary">New Game</button>
+        <div class="btn-row">
+          <button id="btn-pass"   class="action-btn">Pass</button>
+          <button id="btn-resign" class="action-btn danger">Resign</button>
+        </div>
+        <button id="btn-hint" class="action-btn hint-btn">
+          <span id="hint-btn-label">💡 Hint</span>
+          <span id="hint-badge" class="hint-badge hidden"></span>
+        </button>
+      </section>
+
+      <!-- Emoji picker -->
+      <section class="ctrl-group emoji-section">
+        <label>Say something 👇</label>
+        <div id="emoji-picker">
+          <button class="emj" data-e="😀">😀</button>
+          <button class="emj" data-e="😂">😂</button>
+          <button class="emj" data-e="😎">😎</button>
+          <button class="emj" data-e="🤔">🤔</button>
+          <button class="emj" data-e="😮">😮</button>
+          <button class="emj" data-e="😭">😭</button>
+          <button class="emj" data-e="👍">👍</button>
+          <button class="emj" data-e="❤️">❤️</button>
+          <button class="emj" data-e="🎉">🎉</button>
+          <button class="emj" data-e="🤗">🤗</button>
+          <button class="emj" data-e="😤">😤</button>
+          <button class="emj" data-e="🙈">🙈</button>
+          <button class="emj" data-e="🤩">🤩</button>
+          <button class="emj" data-e="😴">😴</button>
+          <button class="emj" data-e="🙄">🙄</button>
+        </div>
+      </section>
+
+      <!-- Mini chat feed -->
+      <div id="chat-feed"></div>
+
+      <section class="ctrl-group">
+        <button id="history-toggle" class="toggle-btn">
+          History <span id="history-arrow">▼</span>
+        </button>
+        <div id="history-panel" class="hidden">
+          <table id="history-table">
+            <thead>
+              <tr>
+                <th>Date</th><th>Size</th><th>Diff</th>
+                <th>Result</th><th>Moves</th><th>SGF</th>
+              </tr>
+            </thead>
+            <tbody id="history-body">
+              <tr><td colspan="6" class="no-games">No games yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <div id="modal-overlay" class="hidden">
+    <div id="modal">
+      <h2 id="modal-title">Game Over</h2>
+      <p id="modal-body"></p>
+      <div class="btn-row modal-btns">
+        <button id="modal-save" class="action-btn primary">Save & New</button>
+        <button id="modal-discard" class="action-btn">Discard</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
+  <script type="module" src="db.js"></script>
+  <script type="module" src="game.js"></script>
+</body>
+</html>
