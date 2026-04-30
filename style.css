@@ -223,63 +223,6 @@ h1 .sub { font-size: 13px; opacity: 0.6; margin-left: 5px; }
   text-align: center;
 }
 
-/* ── History ──────────────────────────────────────────────────── */
-.toggle-btn {
-  width: 100%;
-  padding: 8px 12px;
-  background: var(--toggle-bg);
-  color: var(--sidebar-fg);
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  text-align: left;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  transition: background 0.15s;
-}
-.toggle-btn:hover { background: var(--btn-hover); }
-
-#history-panel {
-  overflow-x: auto;
-  max-height: 220px;
-  overflow-y: auto;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-}
-
-#history-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 11px;
-}
-#history-table thead tr {
-  background: var(--table-head);
-  position: sticky;
-  top: 0;
-}
-#history-table th, #history-table td {
-  padding: 5px 6px;
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-}
-#history-table tbody tr:nth-child(even) { background: var(--table-row-alt); }
-#history-table tbody tr:nth-child(odd)  { background: var(--table-row); }
-.no-games { text-align: center; opacity: 0.5; padding: 12px; }
-
-.sgf-btn {
-  padding: 2px 6px;
-  font-size: 10px;
-  background: var(--btn-bg);
-  color: var(--btn-fg);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  cursor: pointer;
-}
-.sgf-btn:hover { background: var(--btn-hover); }
 
 /* ── Modal ────────────────────────────────────────────────────── */
 #modal-overlay {
@@ -490,16 +433,6 @@ h1 .sub { font-size: 13px; opacity: 0.6; margin-left: 5px; }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* ── Neural network training status ──────────────────────────── */
-.nn-status {
-  font-size: 0.72rem;
-  color: var(--sidebar-fg);
-  opacity: 0.65;
-  margin-top: 5px;
-  min-height: 1em;
-  text-align: center;
-  transition: opacity 0.4s;
-}
 
 /* ── Utility ──────────────────────────────────────────────────── */
 .hidden { display: none !important; }

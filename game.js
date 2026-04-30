@@ -1,22 +1,18 @@
 // ── Orchestrator — state, events, lifecycle ───────────────────────────────────
-import { initDB, saveGame, loadHistory, exportSGF } from './db.js';
 import { GoGame, BLACK, WHITE, EMPTY } from './go-rules.js';
 import { aiHard, aiNeural, computeHintsAsync } from './ai.js';
-import { initNetwork, getPolicyPriors, isNetworkReady } from './neural.js';
 import { playStoneSound, playCaptureSound, playEmojiSound } from './audio.js';
 import { initRenderer, setRenderGame, render, resizeCanvas, pixelToGrid } from './render.js';
 import {
   AI_PROFILES, EMOJI, EMOJI_REPLIES, rnd,
   applyProfile, showSidebarEmotion, showEmotion, showThinkingDots,
-  addChat, updateHintBadge, updateUI, openModal, closeModal,
+  addChat, updateHintBadge, updateUI, openModal,
 } from './ui.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let game          = null;
 let difficulty    = 'beginner';
 let aiThinking    = false;
-let gameStartTime = null;
-let db            = null;
 let hintComputing = false;
 let hintMoves     = [];
 let hintCount     = 0;
@@ -25,14 +21,13 @@ const canvas = document.getElementById('board');
 const ctx    = canvas.getContext('2d');
 initRenderer(canvas, ctx);
 
-// ── Hint helpers ──────────────────────────────────────────────────────────────
 function clearHints() {
   hintMoves = []; hintCount = 0; updateHintBadge(0);
 }
 
 // ── Emoji reaction ────────────────────────────────────────────────────────────
 async function aiReactToEmoji(userEmoji) {
-  await new Promise(r => setTimeout(r, 5000 + Math.random() * 1000));
+  await new Promise(r => setTimeout(r, 1000 + Math.random() * 500));
   const reply = rnd(EMOJI_REPLIES[userEmoji] || ['😊', '🤔']);
   showEmotion(reply, 2200);
   addChat('ai', reply);
@@ -53,7 +48,7 @@ async function doAIMove() {
 
   const move = difficulty === 'beginner'
     ? await aiHard(game)
-    : await aiNeural(game, isNetworkReady() ? getPolicyPriors : null);
+    : await aiNeural(game);
 
   if (move) {
     game.tryMove(move[0], move[1]);
@@ -90,53 +85,13 @@ function showGameOver() {
   const e = rnd(aiWon ? EMOJI.winGame : EMOJI.loseGame);
   showEmotion(e, 4000); addChat('ai', e);
 
-  const code = r.reason === 'resignation'
-    ? (r.winner === BLACK ? 'B+R' : 'W+R')
-    : (r.winner === BLACK ? `B+${r.margin}` : `W+${r.margin}`);
-
-  openModal(
-    'Game Over', resultStr,
-    () => { saveCurrentGame(code); startNewGame(); },
-    () => startNewGame(),
-  );
-}
-
-// ── History ───────────────────────────────────────────────────────────────────
-async function refreshHistory() {
-  if (!db) return;
-  const rows  = await loadHistory(db);
-  const tbody = document.getElementById('history-body');
-  if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="no-games">No games yet.</td></tr>';
-    return;
-  }
-  tbody.innerHTML = rows.map(r => `
-    <tr><td>${r.date}</td><td>${r.board_size}×${r.board_size}</td>
-    <td>${r.difficulty}</td><td>${r.result}</td><td>${r.total_moves}</td>
-    <td><button class="sgf-btn" data-id="${r.id}">SGF</button></td></tr>`).join('');
-  tbody.querySelectorAll('.sgf-btn').forEach(
-    b => b.addEventListener('click', () => exportSGF(db, b.dataset.id))
-  );
-}
-
-async function saveCurrentGame(code) {
-  if (!db || !game || !game.moves.length) return;
-  await saveGame(db, {
-    date: new Date().toISOString().slice(0, 10),
-    board_size: game.size, difficulty, result: code,
-    total_moves: game.moves.length,
-    duration_sec: gameStartTime ? Math.floor((Date.now() - gameStartTime) / 1000) : 0,
-    sgf: game.toSGF(),
-  });
-  await refreshHistory();
+  openModal('Game Over', resultStr, startNewGame, startNewGame);
 }
 
 // ── Game lifecycle ────────────────────────────────────────────────────────────
 function startNewGame() {
-  const el      = document.querySelector('#size-btns .opt-btn.active');
-  game          = new GoGame(el ? parseInt(el.dataset.size) : 13);
+  game          = new GoGame(13);
   aiThinking    = false;
-  gameStartTime = Date.now();
   setRenderGame(game);
   applyProfile(rnd(AI_PROFILES));
   clearHints();
@@ -202,14 +157,7 @@ canvas.addEventListener('touchend', async e => {
   if (pos) await handlePlayerMove(pos[0], pos[1]);
 }, { passive: false });
 
-document.getElementById('btn-new').addEventListener('click', () => {
-  if (game && game.moves.length > 5 && !game.over)
-    openModal('New Game', 'Save the current game?',
-      () => { saveCurrentGame('unfinished'); startNewGame(); },
-      () => startNewGame(),
-    );
-  else startNewGame();
-});
+document.getElementById('btn-new').addEventListener('click', startNewGame);
 
 document.getElementById('btn-pass').addEventListener('click', async () => {
   if (!game || game.over || aiThinking || game.turn === WHITE) return;
@@ -257,12 +205,6 @@ document.getElementById('emoji-picker').addEventListener('click', e => {
   if (!aiThinking) aiReactToEmoji(emoji);
 });
 
-document.getElementById('size-btns').addEventListener('click', e => {
-  if (!e.target.dataset.size) return;
-  document.querySelectorAll('#size-btns .opt-btn').forEach(b => b.classList.remove('active'));
-  e.target.classList.add('active'); startNewGame();
-});
-
 document.getElementById('theme-btns').addEventListener('click', e => {
   if (!e.target.dataset.theme) return;
   document.querySelectorAll('#theme-btns .opt-btn').forEach(b => b.classList.remove('active'));
@@ -277,14 +219,6 @@ document.getElementById('diff-btns').addEventListener('click', e => {
   e.target.classList.add('active'); difficulty = e.target.dataset.diff;
 });
 
-document.getElementById('history-toggle').addEventListener('click', () => {
-  const panel = document.getElementById('history-panel');
-  const arrow = document.getElementById('history-arrow');
-  panel.classList.toggle('hidden');
-  arrow.textContent = panel.classList.contains('hidden') ? '▼' : '▲';
-  if (!panel.classList.contains('hidden')) refreshHistory();
-});
-
 window.addEventListener('resize', () => {
   resizeCanvas();
   render(null, hintMoves, hintCount);
@@ -297,14 +231,5 @@ window.addEventListener('resize', () => {
 });
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
-(async () => {
-  try { db = await initDB(); } catch (e) { console.warn('SQLite unavailable:', e); }
-  resizeCanvas();
-  startNewGame();
-
-  // Train the neural network in the background; update sidebar status while training
-  const nnEl = document.getElementById('nn-status');
-  initNetwork(msg => { if (nnEl) nnEl.textContent = msg; })
-    .then(() => { if (nnEl) nnEl.textContent = ''; })
-    .catch(err => { console.warn('Neural network init failed:', err); if (nnEl) nnEl.textContent = ''; });
-})();
+resizeCanvas();
+startNewGame();

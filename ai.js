@@ -252,18 +252,56 @@ export async function aiHard(g) {
   return [best.x, best.y];
 }
 
-// ── Hard AI — PUCT MCTS, guided by neural network policy priors ───────────────
-// getPriors: async (g, candidates) => number[] | null  (injected by game.js)
-export async function aiNeural(g, getPriors = null) {
+// ── Fast playout with AMAF trace ──────────────────────────────────────────────
+// Like fastPlayout but records every position played by ownColor for RAVE updates
+function fastPlayoutWithTrace(g, maxMoves, seedX, seedY, ownColor) {
+  const sim = g.clone();
+  const sz = sim.size;
+  let lx = seedX, ly = seedY;
+  let passes = 0;
+  const amafKeys = [];
+
+  for (let i = 0; i < maxMoves; i++) {
+    const cands = [];
+    if (lx != null && Math.random() < 0.7) {
+      for (let a = 0; a < sz * 2 && cands.length < 5; a++) {
+        const nx = lx + Math.floor(Math.random() * 7) - 3;
+        const ny = ly + Math.floor(Math.random() * 7) - 3;
+        if (nx >= 0 && ny >= 0 && nx < sz && ny < sz && sim.board[nx][ny] === EMPTY)
+          cands.push([nx, ny]);
+      }
+    }
+    for (let a = 0; a < sz * 3 && cands.length < 8; a++) {
+      const nx = Math.floor(Math.random() * sz);
+      const ny = Math.floor(Math.random() * sz);
+      if (sim.board[nx][ny] === EMPTY) cands.push([nx, ny]);
+    }
+
+    let moved = false;
+    const currentColor = sim.turn;
+    for (const [nx, ny] of cands) {
+      if (sim.tryMove(nx, ny).ok) {
+        if (currentColor === ownColor) amafKeys.push(nx * sz + ny);
+        passes = 0; lx = nx; ly = ny; moved = true; break;
+      }
+    }
+    if (!moved) { if (++passes >= 2) break; sim.pass(); }
+  }
+  return [sim.scoreGame().winner, amafKeys];
+}
+
+// ── Hard AI — RAVE-enhanced MCTS (Rapid Action Value Estimation) ───────────────
+// RAVE/AMAF treats any move that appeared in a rollout as evidence for its
+// tree-level value, giving ~2× more effective rollouts vs plain UCB1 at the
+// same compute budget — well-suited for 13×13 without neural networks.
+export async function aiNeural(g) {
   const color = g.turn;
   const allMoves = validMoves(g);
   if (!allMoves.length) return null;
 
-  // Opening book: instant star-point moves, no MCTS needed
   const op = openingMove(g);
   if (op) return op;
 
-  // Atari rescue: always escape own groups in danger before anything else
   const escape = findAtariEscape(g, color);
   if (escape) return escape;
 
@@ -293,55 +331,55 @@ export async function aiNeural(g, getPriors = null) {
   pool.sort((a, b) => b.w - a.w);
   const candidates = pool.slice(0, Math.min(20, pool.length));
 
-  // Fetch neural network policy priors; fall back to null if network not ready
-  let priors = null;
-  if (getPriors) {
-    const raw = await getPriors(g, candidates);
-    if (raw) {
-      const pSum = raw.reduce((a, b) => a + b, 0) || 1;
-      priors = raw.map(p => p / pSum);
-    }
+  // RAVE data: N/W = tree stats, NR/WR = AMAF stats
+  const N  = new Map(), W  = new Map();
+  const NR = new Map(), WR = new Map();
+  const candidateSet = new Set();
+  for (const m of candidates) {
+    const k = m.x * g.size + m.y;
+    N.set(k, 0); W.set(k, 0); NR.set(k, 0); WR.set(k, 0);
+    candidateSet.add(k);
   }
 
-  // PUCT (with neural priors) or UCB1 fallback
-  const wins = new Map(), plays = new Map();
-  for (const m of candidates) { const k = m.x * g.size + m.y; wins.set(k, 0); plays.set(k, 0); }
-
-  const totalRollouts = candidates.length * 35;
+  // K_RAVE controls blend: high K → trust RAVE longer before switching to Q
+  const K_RAVE        = 1000;
+  const C_UCB         = 0.5;
+  const totalRollouts = candidates.length * 30; // ~600 for 20 candidates
   const batchSize     = 25;
-  const C_PUCT        = 2.5;
 
   for (let done = 0; done < totalRollouts; done += batchSize) {
     await new Promise(r => setTimeout(r, 0));
     for (let b = 0; b < batchSize && done + b < totalRollouts; b++) {
-      const total = [...plays.values()].reduce((a, v) => a + v, 0) + 1;
+      const total = [...N.values()].reduce((a, v) => a + v, 0) + 1;
       let bk = null, bu = -Infinity;
-      for (let idx = 0; idx < candidates.length; idx++) {
-        const m = candidates[idx];
-        const k = m.x * g.size + m.y;
-        const p = plays.get(k), w = wins.get(k);
-        let u;
-        if (priors) {
-          const prior = priors[idx];
-          u = p === 0
-            ? C_PUCT * prior * Math.sqrt(total + 1)
-            : w / p + C_PUCT * prior * Math.sqrt(total) / (1 + p);
-        } else {
-          u = p === 0 ? Infinity : w / p + Math.sqrt(1.5 * Math.log(total) / p);
-        }
+      for (const m of candidates) {
+        const k  = m.x * g.size + m.y;
+        const n  = N.get(k),  w  = W.get(k);
+        const nr = NR.get(k), wr = WR.get(k);
+        const Q    = n  > 0 ? w  / n  : 0.5;
+        const RAVE = nr > 0 ? wr / nr : 0.5;
+        const beta = Math.sqrt(K_RAVE / (3 * n + K_RAVE));
+        const u = n === 0
+          ? Infinity
+          : (1 - beta) * Q + beta * RAVE + C_UCB * Math.sqrt(Math.log(total) / n);
         if (u > bu) { bu = u; bk = k; }
       }
       const mx = Math.floor(bk / g.size), my = bk % g.size;
       const tmp = g.clone();
       tmp.tryMove(mx, my);
-      const winner = fastPlayout(tmp, g.size * 3, mx, my);
-      plays.set(bk, plays.get(bk) + 1);
-      if (winner === color) wins.set(bk, wins.get(bk) + 1);
+      const [winner, amafKeys] = fastPlayoutWithTrace(tmp, g.size * 3, mx, my, color);
+      N.set(bk, N.get(bk) + 1);
+      if (winner === color) W.set(bk, W.get(bk) + 1);
+      for (const ak of amafKeys) {
+        if (!candidateSet.has(ak)) continue;
+        NR.set(ak, NR.get(ak) + 1);
+        if (winner === color) WR.set(ak, WR.get(ak) + 1);
+      }
     }
   }
 
   let best = candidates[0], bp = -1;
-  for (const m of candidates) { const p = plays.get(m.x * g.size + m.y); if (p > bp) { bp = p; best = m; } }
+  for (const m of candidates) { const p = N.get(m.x * g.size + m.y); if (p > bp) { bp = p; best = m; } }
   return [best.x, best.y];
 }
 
